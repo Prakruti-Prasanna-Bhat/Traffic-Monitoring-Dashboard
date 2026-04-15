@@ -1,13 +1,23 @@
+# Import core POX controller modules
+
 from pox.core import core
 import pox.openflow.libopenflow_01 as of
 from pox.lib.recoco import Timer
+
+# For saving logs and stats
+
 import json
 import csv
 import os
 import time
 
-log = core.getLogger()
-# ── OPTIONAL BLOCKING CONFIG ─────────────────────
+log = core.getLogger() # Logger for printing info in terminal
+
+# ─────────────────────────────────────────────
+# BLOCKING CONFIG (To test Allowed vs Blocked)
+# ─────────────────────────────────────────────
+
+# Enable/disable blocking feature
 ENABLE_BLOCKING = True
 
 BLOCK_RULES = [
@@ -17,19 +27,28 @@ BLOCK_RULES = [
 
 # mac_to_port[dpid][mac] = port
 mac_to_port = {}
-history = []
-event_log = []
+history = []        # Stores past stats for graphing
+event_log = []      # Stores events like spikes, blocking, etc.
+
+# Previous values used to calculate rate (delta)
 prev_total_bytes = 0
 prev_total_packets = 0
 prev_delta_bytes = 0
 
+# ─────────────────────────────────────────────
+# FILE STORAGE SETUP
+# ─────────────────────────────────────────────
+
+# Directory where logs are stored
 DATA_DIR = os.path.expanduser("~/CN-Orange-PES1UG24CS330/sdn-traffic-monitor/data")
 os.makedirs(DATA_DIR, exist_ok=True)
 
+# File paths
 STATS_FILE = os.path.join(DATA_DIR, "stats.json")
 SUMMARY_LOG = os.path.join(DATA_DIR, "traffic_log.csv")
 FLOW_LOG = os.path.join(DATA_DIR, "flow_log.csv")
 
+# CSV fields
 SUMMARY_FIELDS = [
     "date", "timestamp", "session_id",
     "total_packets", "total_bytes", "active_flows",
@@ -41,22 +60,29 @@ FLOW_FIELDS = [
     "switch", "src", "dst", "packets", "bytes", "priority"
 ]
 
+# Unique ID per run/session
 SESSION_ID = time.strftime("%Y%m%d_%H%M%S")
 
+# ─────────────────────────────────────────────
+#  HELPER FUNCTIONS (LOGGING)
+# ─────────────────────────────────────────────
 
 def _ensure_csv(path, fieldnames):
+    """Create CSV file with header if it doesn't exist"""
     if not os.path.exists(path):
         with open(path, "w", newline="") as f:
             csv.DictWriter(f, fieldnames=fieldnames).writeheader()
 
 
 def append_summary(row):
+    """Append overall traffic summary"""
     _ensure_csv(SUMMARY_LOG, SUMMARY_FIELDS)
     with open(SUMMARY_LOG, "a", newline="") as f:
         csv.DictWriter(f, fieldnames=SUMMARY_FIELDS).writerow(row)
 
 
 def append_flows(rows):
+    """Append per-flow statistics"""
     if not rows:
         return
     _ensure_csv(FLOW_LOG, FLOW_FIELDS)
@@ -67,24 +93,45 @@ def append_flows(rows):
 
 
 def save_stats(data):
+    """Save latest snapshot as JSON (used by dashboard)"""
     tmp = STATS_FILE + ".tmp"
     with open(tmp, "w") as f:
         json.dump(data, f, indent=2)
     os.replace(tmp, STATS_FILE)
 
 
+# ─────────────────────────────────────────────
+#  PERIODIC STATS REQUEST
+# ─────────────────────────────────────────────
+
 def request_stats():
+    """Ask all switches for flow statistics every 5 seconds"""
     for conn in core.openflow._connections.values():
         conn.send(of.ofp_stats_request(body=of.ofp_flow_stats_request()))
     Timer(5, request_stats)
 
 
+# ─────────────────────────────────────────────
+#  SWITCH CONNECT EVENT
+# ─────────────────────────────────────────────
+
 def _handle_ConnectionUp(event):
+    """Triggered when a switch connects to controller"""
     log.info("Switch connected: %s", event.dpid)
     mac_to_port.setdefault(event.dpid, {})
 
+# ─────────────────────────────────────────────
+#  PACKET HANDLING 
+# ─────────────────────────────────────────────
 
 def _handle_PacketIn(event):
+    """
+    Triggered when switch sends packet to controller
+    This is where:
+    - learning switch happens
+    - blocking happens
+    """
+
     packet = event.parsed
     if not packet.parsed:
         return
@@ -102,10 +149,11 @@ def _handle_PacketIn(event):
         src_ip = str(ip.srcip)
         dst_ip = str(ip.dstip)
 
+        #  BLOCKING LOGIC
         if ENABLE_BLOCKING and (src_ip, dst_ip) in BLOCK_RULES:
             log.info("BLOCKED traffic between %s and %s", src_ip, dst_ip)
 
-            # add dashboard event
+            # Log event for dashboard
             event_log.append({
                 "timestamp": time.strftime("%H:%M:%S"),
                 "label": f"Blocked Event: {src_ip} -> {dst_ip}",
@@ -141,8 +189,19 @@ def _handle_PacketIn(event):
         msg.in_port = in_port
         event.connection.send(msg)
 
+# ─────────────────────────────────────────────
+#  FLOW STATS PROCESSING
+# ─────────────────────────────────────────────
 
 def _handle_FlowStatsReceived(event):
+    """
+    Called when switch sends stats
+    Used to:
+    - compute traffic
+    - detect spikes
+    - log data
+    """
+
     total_packets = 0
     total_bytes = 0
     active_flows = 0
@@ -177,6 +236,7 @@ def _handle_FlowStatsReceived(event):
                 "bytes": stat.byte_count,
                 "priority": stat.priority,
             })
+    # Calculate traffic change
     delta_bytes = total_bytes - prev_total_bytes
     delta_packets = total_packets - prev_total_packets
     if delta_bytes < 0:
@@ -188,7 +248,7 @@ def _handle_FlowStatsReceived(event):
     if flow_rows:
         top = max(flow_rows, key=lambda x: x["bytes"])
         top_talker = f"{top['src']} -> {top['dst']}"
-
+    # Traffic classification
     if delta_bytes > 100_000_000:      # 100 MB
         alert = "High Traffic"
     elif delta_bytes > 100_000:        # 100 KB
@@ -263,10 +323,18 @@ def _handle_FlowStatsReceived(event):
         total_packets, total_bytes, active_flows, alert, DATA_DIR
     )
 
+# ─────────────────────────────────────────────
+#  CONTROLLER START
+# ─────────────────────────────────────────────
 
 def launch():
+    """Entry point when POX starts"""
+    # Register event handlers
     core.openflow.addListenerByName("ConnectionUp", _handle_ConnectionUp)
     core.openflow.addListenerByName("PacketIn", _handle_PacketIn)
     core.openflow.addListenerByName("FlowStatsReceived", _handle_FlowStatsReceived)
+
+    # Start periodic stats polling
     Timer(5, request_stats)
+
     log.info("Traffic monitor started — session_id=%s data->%s", SESSION_ID, DATA_DIR)
