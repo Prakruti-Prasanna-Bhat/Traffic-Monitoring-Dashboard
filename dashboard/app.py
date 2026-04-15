@@ -4,12 +4,17 @@ import json
 import os
 import time
 
+# ---------------------------------------------------------
+# Streamlit page setup
+# ---------------------------------------------------------
 st.set_page_config(
     page_title="SDN Traffic Monitor",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
-
+# ---------------------------------------------------------
+# CSS styling for the dashboard
+# ---------------------------------------------------------
 st.markdown("""
 <style>
   @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:wght@300;400;500;600&display=swap');
@@ -145,28 +150,39 @@ st.markdown("""
   [data-testid="stDecoration"] { display: none; }
 </style>
 """, unsafe_allow_html=True)
-
+# ---------------------------------------------------------
+# File paths
+# These are the files created by the controller script.
+# stats.json -> latest snapshot for live dashboard
+# traffic_log.csv -> historical overall traffic logs
+# flow_log.csv -> historical per-flow logs
+# ---------------------------------------------------------
 BASE_DIR   = os.path.expanduser("~/CN-Orange-PES1UG24CS330/sdn-traffic-monitor/data")
 STATS_FILE = os.path.join(BASE_DIR, "stats.json")
 SUMMARY_LOG = os.path.join(BASE_DIR, "traffic_log.csv")
 FLOW_LOG    = os.path.join(BASE_DIR, "flow_log.csv")
 
-# ── session state init ────────────────────────────────────────────────────────
+# ---------------------------------------------------------
+# Streamlit session state initialization
+# ---------------------------------------------------------
 if "session_history" not in st.session_state:
     st.session_state.session_history = []
 if "session_start" not in st.session_state:
     st.session_state.session_start = time.strftime("%H:%M:%S")
 if "session_base_packets" not in st.session_state:
-    st.session_state.session_base_packets = None   # first-seen cumulative value
+    st.session_state.session_base_packets = None    # first total packet count seen
 if "session_base_bytes" not in st.session_state:
-    st.session_state.session_base_bytes = None
+    st.session_state.session_base_bytes = None       # first total byte count seen
 if "level_timeline" not in st.session_state:
-    st.session_state.level_timeline = []           # {"timestamp","kind","level","label","bytes_mb"}
+    st.session_state.level_timeline = []          # stores transitions/spikes for session timeline
 if "last_level" not in st.session_state:
     st.session_state.last_level = None
 if "seen_spike_ts" not in st.session_state:
     st.session_state.seen_spike_ts = set()
-
+# ---------------------------------------------------------
+# Helper function:
+# ---------------------------------------------------------
+# Converts delta_bytes into traffic category
 def traffic_level(delta_bytes):
     if delta_bytes < 100_000:
         return "low", "#2D6E2D", "🟢 Low Traffic"
@@ -174,8 +190,7 @@ def traffic_level(delta_bytes):
         return "mid", "#7A5200", "🟡 Moderate Traffic"
     else:
         return "high", "#8B1A1A", "🔴 High Traffic Detected"
-
-
+# Converts raw byte values into readable format
 def fmt_bytes(b):
     if b >= 1_000_000_000:
         return f"{b/1_000_000_000:.2f} GB"
@@ -185,8 +200,10 @@ def fmt_bytes(b):
         return f"{b/1_000:.1f} KB"
     return f"{b} B"
 
+# ---------------------------------------------------------
+# Dashboard header
+# ---------------------------------------------------------
 
-# ── header ────────────────────────────────────────────────────────────────────
 st.markdown(f"""
 <div class="dash-header">
   <div>
@@ -198,10 +215,16 @@ st.markdown(f"""
   </div>
 </div>
 """, unsafe_allow_html=True)
-
+# Create two tabs:
+# 1. Live Dashboard -> current live monitoring
+# 2. Historical Data -> data stored across runs
 tab_live, tab_history = st.tabs(["Live Dashboard", "Historical Data"])
 
-# ── historical tab ────────────────────────────────────────────────────────────
+# =========================================================
+# Historical Tab
+# Shows previously saved traffic logs from CSV files
+# =========================================================
+
 with tab_history:
     st.markdown('<div class="section-title">Persisted Traffic Log</div>', unsafe_allow_html=True)
 
@@ -276,7 +299,10 @@ with tab_history:
                 width="stretch", hide_index=True
             )
 
-# ── live tab ──────────────────────────────────────────────────────────────────
+# =========================================================
+# Live tab
+# This tab keeps refreshing and shows current traffic data
+# =========================================================
 with tab_live:
     placeholder = st.empty()
 
@@ -544,8 +570,9 @@ while True:
                       <div style="font-size:0.72rem;color:#8A7B6A">since {st.session_state.session_start}</div>
                     </div>
                     """, unsafe_allow_html=True)
-
-            # ── flow table + top talkers ──────────────────────────────────────
+            # ─────────────────────────────────────────────────────────────────
+            # flow table + top talkers
+            # ─────────────────────────────────────────────────────────────────
             flows = data.get("flows", [])
             if flows:
                 st.markdown('<div class="section-title">Recent Flow Statistics</div>', unsafe_allow_html=True)
