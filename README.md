@@ -86,7 +86,7 @@ sdn-traffic-monitor/
 │   ├── flow_log.csv
 │   ├── stats.json
 │   └── traffic_log.csv
-├── screenshots/
+├── images/
 ├── .gitignore
 ├── README.md
 └── requirements.txt
