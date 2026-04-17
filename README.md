@@ -229,34 +229,3 @@ Run pingall
 All hosts communicate successfully
 Dashboard shows steady traffic
 
-Scenario 2: High Traffic
-Run iperf h1 h2
-Observe spike in dashboard graphs
-Increased throughput and packet count
-❌ Scenario 3: Blocked / Filtered Traffic
-Modify controller to block a host (e.g., h3)
-Run ping between blocked hosts
-
-Expected:
-
-Communication fails
-Packet drops observed
-Dashboard shows reduced or no traffic for that flow
-Step 8: Stop the System
-Stop Mininet:
-exit
-Stop POX:
-Ctrl + C
-Stop Streamlit:
-Ctrl + C
-Notes
-Always start the POX controller before Mininet
-Run sudo mn -c before restarting topology to avoid conflicts
-Ensure virtual environment is activated for dashboard
-Demo Tips
-Start with pingall → show normal behavior
-Run iperf → show spike 📈
-Show dashboard + flow table side-by-side
-Then demonstrate blocked traffic
-
-This gives a clear and strong demo for evaluation 💯
